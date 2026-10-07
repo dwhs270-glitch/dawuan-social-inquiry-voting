@@ -18,7 +18,7 @@ const SHEET_OPTIONS = "Options";
 const SHEET_VOTES = "Votes";
 const PROP_ADMIN_USER = "ADMIN_USER_HASH";
 const PROP_ADMIN_PASS = "ADMIN_PASS_HASH";
-const BACKEND_VERSION = "20261007-1306";
+const BACKEND_VERSION = "20261007-1328";
 let requestDb = null;
 function invalidatePublic_(){PropertiesService.getScriptProperties().setProperty("PUBLIC_REV",Utilities.getUuid());}
 
@@ -56,7 +56,7 @@ function doPost(e) {
   try {
     const data = JSON.parse((e.postData && e.postData.contents) || "{}");
     const action = data.action || "";
-    const mutating=["submitVote","saveSettings","addOption","deleteOption"].includes(action);
+    const mutating=["submitVote","saveSettings","addOption","deleteOption","deleteVote","resetPoll"].includes(action);
     const lock=mutating?LockService.getScriptLock():null;
     if(lock)lock.waitLock(20000);
     try {
@@ -69,6 +69,8 @@ function doPost(e) {
       case "saveSettings": requireAdmin_(data.token); return json_(saveSettings_(data));
       case "addOption": requireAdmin_(data.token); return json_(addOption_(data));
       case "deleteOption": requireAdmin_(data.token); return json_(deleteOption_(data));
+      case "deleteVote": requireAdmin_(data.token); return json_(deleteVote_(data));
+      case "resetPoll": requireAdmin_(data.token); return json_(resetPoll_(data));
       default: throw new Error("未知操作");
     }
     } finally { if(lock)lock.releaseLock(); }
@@ -81,7 +83,7 @@ function publicPoll_(){
   const revision=PropertiesService.getScriptProperties().getProperty("PUBLIC_REV")||"initial";
   const cache=CacheService.getScriptCache(),key="public:"+revision;
   const saved=cache.get(key);
-  if(saved){try{return JSON.parse(saved);}catch(e){}}
+  if(saved){try{const data=JSON.parse(saved);data.poll=effectivePoll_(data.poll);return data;}catch(e){}}
   const poll=readPoll_();
   const data={ok:true,poll,results:results_(poll.options)};
   const encoded=JSON.stringify(data);
@@ -92,6 +94,7 @@ function publicPoll_(){
 
 function submitVote_(d){
   const poll = readPoll_();
+  if(poll.ended) throw new Error("已超過投票截止時間。");
   if(!poll.open) throw new Error("目前已關閉投票。");
   const rawClass=String(d.studentClass||"").normalize("NFKC").trim();
   const rawNo=String(d.studentNo||"").normalize("NFKC").trim();
@@ -130,22 +133,70 @@ function requireAdmin_(token){
   if(!token || !CacheService.getScriptCache().get("session:"+token)) throw new Error("後台登入已失效，請重新登入。");
 }
 
-function adminData_(){
+function adminData_(rows){
   const poll=readPoll_();
-  const rows=db_().getSheetByName(SHEET_VOTES).getDataRange().getValues().slice(1);
-  return {ok:true,poll,results:results_(poll.options,rows),votes:readVotes_(poll.options,rows)};
+  if(!rows)rows=db_().getSheetByName(SHEET_VOTES).getDataRange().getValues().slice(1);
+  return {ok:true,poll,features:{deadline:true,deleteVote:true,resetPoll:true},version:BACKEND_VERSION,results:results_(poll.options,rows),votes:readVotes_(poll.options,rows)};
 }
 
+function parseDeadline_(value){
+  const text=String(value||"").trim();if(!text)return "";
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+08:00$/.test(text) && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/.test(text))throw new Error("截止時間格式不正確，請重新選擇。");
+  const time=Date.parse(text);
+  if(!Number.isFinite(time))throw new Error("截止時間無效。");
+  const normalized=new Date(time).toISOString();
+  const calendar=text.endsWith("Z")?normalized:new Date(time+8*3600000).toISOString();
+  if(calendar.slice(0,16)!==text.slice(0,16))throw new Error("截止日期或時間無效。");
+  return normalized;
+}
+function effectivePoll_(poll){
+  const now=Date.now(),deadline=Date.parse(poll.deadlineAt||"");
+  const manualOpen=poll.manualOpen===undefined?!!poll.open:!!poll.manualOpen;
+  const ended=Number.isFinite(deadline)&&now>=deadline;
+  return {...poll,manualOpen,ended,open:manualOpen&&!ended,serverNow:now};
+}
 function saveSettings_(d){
   const maxVotes=Number(d.maxVotes);
-  if(!Number.isInteger(maxVotes)||maxVotes<1||maxVotes>99) throw new Error("票數請填 1～99 的整數。");
-  const sh=db_().getSheetByName(SHEET_SETTINGS);
-  const map={title:clean_(d.title,100)||"課程票選",description:clean_(d.description,500),maxVotes:String(maxVotes),open:String(d.open===true||d.open==="true")};
-  const rows=sh.getDataRange().getValues();
+  if(!Number.isInteger(maxVotes)||maxVotes<1||maxVotes>99)throw new Error("票數請填 1～99 的整數。");
+  const sh=db_().getSheetByName(SHEET_SETTINGS),rows=sh.getDataRange().getValues();
+  const existing={};rows.slice(1).forEach(r=>existing[String(r[0])]=String(r[1]||""));
+  const deadlineAt=parseDeadline_(Object.prototype.hasOwnProperty.call(d,"deadlineAt")?d.deadlineAt:(existing.deadlineAt||""));
+  const manualOpen=d.open===true||d.open==="true";
+  if(manualOpen&&deadlineAt&&Date.now()>=Date.parse(deadlineAt))throw new Error("截止時間已過；請設定未來的時間，或將投票狀態設為關閉。");
+  const map={title:clean_(d.title,100)||"課程票選",description:clean_(d.description,500),maxVotes:String(maxVotes),open:String(manualOpen),deadlineAt};
   const values=rows.slice(1).map(r=>[r[0],Object.prototype.hasOwnProperty.call(map,r[0])?sheetText_(map[r[0]]):r[1]]);
-  sh.getRange(2,1,values.length,2).setValues(values);
+  Object.keys(map).forEach(key=>{if(!values.some(r=>r[0]===key))values.push([key,sheetText_(map[key])]);});
+  sh.getRange(2,1,values.length,2).setValues(values);invalidatePublic_();
+  return {ok:true,settings:effectivePoll_({title:map.title,description:map.description,maxVotes,open:manualOpen,manualOpen,deadlineAt})};
+}
+function voteId_(row){
+  const timestamp=row[0] instanceof Date?row[0].getTime():String(row[0]);
+  return sha256_(JSON.stringify([timestamp,String(row[4]),String(row[5]),String(row[6])]));
+}
+function deleteVote_(d){
+  const id=String(d.voteId||""),sh=db_().getSheetByName(SHEET_VOTES);
+  if(!/^[a-f0-9]{64}$/.test(id))throw new Error("投票紀錄識別碼無效。");
+  const rows=sh.getDataRange().getValues().slice(1),matches=[];
+  rows.forEach((r,i)=>{if(voteId_(r)===id)matches.push(i);});
+  if(matches.length!==1)throw new Error("找不到唯一的投票紀錄，請重新整理後再操作。");
+  const index=matches[0];sh.deleteRow(index+2);rows.splice(index,1);invalidatePublic_();
+  return adminData_(rows);
+}
+function resetPoll_(d){
+  if(d.confirmation!=="刪除本次票選")throw new Error("請輸入「刪除本次票選」確認重設。");
+  const ss=db_();
+  // 先關閉票選，避免重設途中有新的選票進入。
+  const settings=ss.getSheetByName(SHEET_SETTINGS);
+  const rows=settings.getDataRange().getValues();
+  const index=rows.findIndex(r=>r[0]==="open");if(index>=0)settings.getRange(index+1,2).setValue("false");
   invalidatePublic_();
-  return {ok:true,settings:{title:map.title,description:map.description,maxVotes,open:map.open==="true"}};
+  ss.getSheetByName(SHEET_VOTES).clearContents();
+  ss.getSheetByName(SHEET_VOTES).getRange(1,1,1,8).setValues([["timestamp","studentClass","studentNo","studentName","studentKey","choiceIds","choiceNames","userAgent"]]);
+  ss.getSheetByName(SHEET_OPTIONS).clearContents();
+  ss.getSheetByName(SHEET_OPTIONS).getRange(1,1,1,4).setValues([["id","name","description","active"]]);
+  settings.clearContents();
+  settings.getRange(1,1,6,2).setValues([["key","value"],["title","優秀同學／作品票選"],["description","請依課程表現與作品內容進行票選。"],["maxVotes","2"],["open","false"],["deadlineAt",""]]);
+  invalidatePublic_();return adminData_([]);
 }
 
 function addOption_(d){
@@ -173,7 +224,7 @@ function readPoll_(){
   const o=ss.getSheetByName(SHEET_OPTIONS).getDataRange().getValues().slice(1)
     .filter(r=>String(r[3]).toLowerCase()!=="false")
     .map(r=>({id:String(r[0]),name:String(r[1]),description:String(r[2]||"")}));
-  return {title:cfg.title||"課程票選",description:cfg.description||"",maxVotes:Math.max(1,Number(cfg.maxVotes)||1),open:String(cfg.open).toLowerCase()==="true",options:o};
+  return effectivePoll_({title:cfg.title||"課程票選",description:cfg.description||"",maxVotes:Math.max(1,Number(cfg.maxVotes)||1),open:String(cfg.open).toLowerCase()==="true",deadlineAt:cfg.deadlineAt||"",options:o});
 }
 function results_(options,rows){
   const counts={}; options.forEach(o=>counts[o.id]=0);
@@ -185,6 +236,7 @@ function readVotes_(options,rows){
   if(!rows)rows=db_().getSheetByName(SHEET_VOTES).getDataRange().getValues().slice(1);
   return [...rows].reverse().map(r=>{
     return {
+      voteId:voteId_(r),
       timestamp:r[0] instanceof Date ? Utilities.formatDate(r[0],Session.getScriptTimeZone()||"Asia/Taipei","yyyy-MM-dd HH:mm:ss") : String(r[0]),
       studentClass:String(r[1]),studentNo:String(r[2]),studentName:String(r[3]),
       choiceNames:String(r[6]||"").split("、").filter(Boolean)
