@@ -1,7 +1,7 @@
 const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const sheets={Settings:[['key','value'],['title','課程票選'],['description','說明'],['maxVotes','2'],['open','true']],Options:[['id','name','description','active'],['a','作品甲','','true'],['b','作品乙','','true']],Votes:[['timestamp','class','no','name','key','ids','names','agent']]};
 let sheetReads=0;
-function sheet(name){return {getDataRange:()=>({getValues:()=>{sheetReads++;return sheets[name].map(r=>r.slice())}}),appendRow:r=>sheets[name].push(r),getRange:(r,c)=>({setValue:v=>sheets[name][r-1][c-1]=v,setValues:values=>values.forEach((row,i)=>row.forEach((v,j)=>sheets[name][r-1+i][c-1+j]=v))})}}
+function sheet(name){return {getDataRange:()=>({getValues:()=>{sheetReads++;return sheets[name].map(r=>r.slice())}}),appendRow:r=>sheets[name].push(r),deleteRow:r=>sheets[name].splice(r-1,1),clearContents:()=>sheets[name]=[],getRange:(r,c)=>({setValue:v=>{if(!sheets[name][r-1])sheets[name][r-1]=[];sheets[name][r-1][c-1]=v;},setValues:values=>values.forEach((row,i)=>row.forEach((v,j)=>{if(!sheets[name][r-1+i])sheets[name][r-1+i]=[];sheets[name][r-1+i][c-1+j]=v;}))})}}
 const props=new Map([['SPREADSHEET_ID','test']]),cache=new Map();let locks=0;
 const ctx=vm.createContext({console,PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),deleteProperty:k=>props.delete(k)})},SpreadsheetApp:{openById:()=>({getSheetByName:sheet})},LockService:{getScriptLock:()=>({waitLock:()=>locks++,releaseLock:()=>locks--})},CacheService:{getScriptCache:()=>({get:k=>cache.get(k),put:(k,v)=>cache.set(k,v),remove:k=>cache.delete(k)})},Utilities:{getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(algo,s)=>[...crypto.createHash('sha256').update(s).digest()],formatDate:d=>d.toISOString()},Session:{getScriptTimeZone:()=> 'Asia/Taipei'},ContentService:{MimeType:{JSON:'json'},createTextOutput:s=>({setMimeType:()=>s})}});
 vm.runInContext(fs.readFileSync('backend/Code.gs','utf8'),ctx);
@@ -32,3 +32,35 @@ assert.equal(api('submitVote',{studentClass:'502',studentNo:'2',studentName:'學
 assert.equal(api('adminLogout',{token}).ok,true);assert.equal(api('getAdminData',{token}).ok,false);
 assert.equal(ctx.sheetText_('=1+1'),"'=1+1");
 console.log('PASS: 權限、登入、票數上限、欄位驗證、全形與前導零、重複提交、公開資料隔離、歷史紀錄、停用、關閉投票、登出失效、表格公式防護');
+
+assert.equal(api('deleteVote',{voteId:'a'.repeat(64)}).ok,false);
+assert.equal(api('resetPoll',{confirmation:'刪除本次票選'}).ok,false);
+const session=api('adminLogin',{username:'test-user',password:'test-pass'}).token;
+let now=Date.parse('2026-10-07T14:00:00+08:00');
+class ClockDate extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}}
+ctx.Date=ClockDate;
+assert.equal(api('saveSettings',{token:session,title:'截止測試',maxVotes:2,open:true,deadlineAt:'2026-10-07T14:01:00+08:00'}).ok,true);
+let before=api('getPublicPoll');assert.equal(before.poll.open,true);assert.equal(before.poll.deadlineAt,'2026-10-07T06:01:00.000Z');
+assert.equal(api('submitVote',{studentClass:'502',studentNo:'3',studentName:'截止前',choices:['b']}).ok,true);
+const vote=api('getAdminData',{token:session}).votes.find(v=>v.studentNo==='3');
+assert.equal(api('deleteVote',{token:session,voteId:vote.voteId}).ok,true);
+assert.equal(api('getPublicPoll').results.find(r=>r.id==='b').count,1);
+assert.equal(api('submitVote',{studentClass:'502',studentNo:'3',studentName:'重投',choices:['b']}).ok,true);
+const stable=api('getAdminData',{token:session}).votes.find(v=>v.studentNo==='3').voteId;
+assert.equal(api('deleteVote',{token:session,voteId:'a'.repeat(64)}).ok,false);
+api('getPublicPoll');now=Date.parse('2026-10-07T14:01:00+08:00');
+assert.equal(api('getPublicPoll').poll.open,false,'快取在截止瞬間仍必須關閉');
+assert.equal(api('submitVote',{studentClass:'502',studentNo:'4',studentName:'截止後',choices:['b']}).ok,false);
+assert.equal(api('saveSettings',{token:session,maxVotes:2,open:true,deadlineAt:'2026-10-07T14:00:00+08:00'}).ok,false);
+assert.equal(api('saveSettings',{token:session,maxVotes:2,open:false,deadlineAt:'2026-02-30T14:00:00+08:00'}).ok,false);
+assert.equal(api('saveSettings',{token:session,maxVotes:2,open:false,deadlineAt:'wrong'}).ok,false);
+assert.equal(api('saveSettings',{token:session,maxVotes:2,open:true,deadlineAt:''}).ok,true);
+assert.equal(api('getPublicPoll').poll.open,true);
+assert.equal(api('resetPoll',{token:session,confirmation:'錯誤'}).ok,false);
+assert.equal(api('getAdminData',{token:session}).votes.some(v=>v.voteId===stable),true);
+const reset=api('resetPoll',{token:session,confirmation:'刪除本次票選'});
+assert.equal(reset.ok,true);assert.equal(reset.poll.open,false);assert.equal(reset.poll.maxVotes,2);assert.equal(reset.poll.deadlineAt,'');assert.equal(reset.votes.length,0);assert.equal(reset.poll.options.length,0);
+assert.equal(api('getPublicPoll').results.length,0);
+assert.equal(api('adminLogin',{username:'test-user',password:'test-pass'}).ok,true,'重設不改帳密');
+assert.equal(api('addOption',{token:session,name:'新票選'}).ok,true);
+console.log('PASS: 臺灣截止時間、期限邊界、快取截止、無效日期、截止後拒投、授權刪除、票數重算、刪除後重投、整場重設與帳密保留');
