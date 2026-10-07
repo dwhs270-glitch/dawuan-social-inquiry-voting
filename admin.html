@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>票選系統後台｜大灣高中</title>
-  <link rel="stylesheet" href="styles.css?v=20261007-1306b">
+  <link rel="stylesheet" href="styles.css?v=20261007-1328">
 </head>
 <body class="admin-body">
   <header class="hero compact">
@@ -70,6 +70,8 @@
               </select>
             </label>
           </div>
+          <label class="deadline-field"><span>投票截止時間（臺灣時間）</span><input id="settingDeadline" type="datetime-local" step="60"><small>留白表示不設截止時間；到期後自動停止接受投票。</small></label>
+          <p id="featureNotice" class="muted small" hidden>新版管理功能需要更新 Apps Script 後端部署後才能使用。</p>
           <button id="saveSettings" class="primary">儲存設定</button>
         </section>
 
@@ -116,17 +118,23 @@
                 <th>班級</th>
                 <th>座號</th>
                 <th>姓名</th>
-                <th>投票內容</th>
+                <th>投票內容</th><th>管理</th>
               </tr>
             </thead>
             <tbody id="votesTable"></tbody>
           </table>
         </div>
       </section>
+      <section class="card">
+        <h3>刪除本次票選／開始新票選</h3>
+        <p class="muted">清除本次候選項目、全部投票紀錄及截止時間，並重設為關閉投票、每人 2 票。管理帳密保持不變。</p>
+        <p class="muted small">需要保留紀錄時，請先匯出 CSV。執行時須輸入「刪除本次票選」確認。</p>
+        <button id="resetPoll" class="danger" disabled>刪除本次票選並重設</button>
+      </section>
     </section>
   </main>
 
   <script src="config.js?v=20261007-1255"></script>
-  <script src="admin.js?v=20261007-1306b"></script>
+  <script src="admin.js?v=20261007-1328"></script>
 </body>
 </html>
