@@ -1,6 +1,7 @@
 const API = window.APP_CONFIG.API_URL;
 let poll = null;
 let selected = new Set();
+let loading = null, submitted = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,7 +16,7 @@ function hideMessage(){ $("message").hidden = true; }
 async function callApi(action, payload={}) {
   if (!API || API.includes("PASTE_YOUR")) throw new Error("尚未設定後端 API 網址。");
   const res = await fetch(API, {
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(60000),
     method: "POST",
     headers: {"Content-Type":"text/plain;charset=utf-8"},
     body: JSON.stringify({action, ...payload})
@@ -25,24 +26,34 @@ async function callApi(action, payload={}) {
   return data;
 }
 
-async function loadPoll(){
-  try{
-    const data = await callApi("getPublicPoll");
-    poll = data.poll;
-    $("pollTitle").textContent = poll.title || "課程票選";
-    $("pollDescription").textContent = poll.description || "";
-    $("maxVotes").textContent = poll.maxVotes;
-    $("selectedLimit").textContent = poll.maxVotes;
-    const badge = $("statusBadge");
-    badge.textContent = poll.open ? "開放投票" : "目前已關閉";
-    badge.className = "badge " + (poll.open ? "open" : "closed");
+function applyPoll(data){
+  const before=JSON.stringify(poll?.options), oldSelection=new Set(selected);
+  poll=data.poll;
+  $("pollTitle").textContent=poll.title||"課程票選";
+  $("pollDescription").textContent=poll.description||"";
+  $("maxVotes").textContent=poll.maxVotes;$("selectedLimit").textContent=poll.maxVotes;
+  $("statusBadge").textContent=poll.open?"開放投票":"目前已關閉";
+  $("statusBadge").className="badge "+(poll.open?"open":"closed");
+  if(before!==JSON.stringify(poll.options)){
     renderOptions();
-    renderResults(data.results || []);
-  }catch(err){
-    $("statusBadge").textContent = "連線失敗";
-    $("statusBadge").className = "badge closed";
-    showMessage(err.message, "error");
+    document.querySelectorAll("#options input").forEach(i=>{
+      if(oldSelection.has(i.value)&&selected.size<poll.maxVotes){i.checked=true;selected.add(i.value);i.closest("label").classList.add("selected");}
+    });
   }
+  document.querySelectorAll("#options input").forEach(i=>i.disabled=!poll.open||submitted);
+  if(selected.size>poll.maxVotes){selected.clear();document.querySelectorAll("#options input").forEach(i=>{i.checked=false;i.closest("label").classList.remove("selected");});}
+  updateSelected();renderResults(data.results||[]);
+}
+async function loadPoll(){
+  if(loading)return loading;
+  const btn=$("refreshResults");btn.disabled=true;btn.textContent="更新中…";
+  loading=(async()=>{
+    try{const data=await callApi("getPublicPoll");applyPoll(data);try{sessionStorage.setItem("dwhs_public_poll",JSON.stringify({at:Date.now(),data}));}catch(e){}}
+    catch(err){
+      $("statusBadge").textContent="連線失敗";$("statusBadge").className="badge closed";
+      showMessage(err.name==="TimeoutError"?"連線逾時，請按重新整理再試。":err.message,"error");
+    }finally{loading=null;btn.disabled=false;btn.textContent="重新整理";}
+  })();return loading;
 }
 
 function renderOptions(){
@@ -77,7 +88,7 @@ function renderOptions(){
 
 function updateSelected(){
   $("selectedCount").textContent = selected.size;
-  $("submitVote").disabled = !poll?.open || selected.size === 0;
+  $("submitVote").disabled = submitted || !poll?.open || selected.size === 0;
 }
 
 function renderResults(results){
@@ -103,7 +114,7 @@ $("submitVote").addEventListener("click", async ()=>{
   $("submitVote").disabled=true;
   try{
     const data=await callApi("submitVote",{studentClass,studentNo,studentName,choices:[...selected]});
-    showMessage("投票成功！感謝你的參與。","success");
+    submitted=true;showMessage("投票成功！感謝你的參與。","success");
     renderResults(data.results || []);
     document.querySelectorAll("#options input").forEach(i=>i.disabled=true);
   }catch(err){
@@ -111,10 +122,14 @@ $("submitVote").addEventListener("click", async ()=>{
   }
 });
 
-$("refreshResults").addEventListener("click", async ()=>{
-  try{ const d=await callApi("getPublicPoll"); renderResults(d.results||[]); }
-  catch(e){ showMessage(e.message,"error"); }
-});
+$("refreshResults").addEventListener("click",loadPoll);
 
 function escapeHtml(v){ return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m])); }
+try{
+  const cached=JSON.parse(sessionStorage.getItem("dwhs_public_poll")||"null");
+  if(cached&&Date.now()-cached.at<300000){
+    applyPoll(cached.data);$("statusBadge").textContent="正在確認最新狀態…";
+    $("submitVote").disabled=true;document.querySelectorAll("#options input").forEach(i=>i.disabled=true);
+  }
+}catch(e){}
 loadPoll();
