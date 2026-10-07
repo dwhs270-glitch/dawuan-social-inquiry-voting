@@ -1,6 +1,7 @@
 const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const sheets={Settings:[['key','value'],['title','課程票選'],['description','說明'],['maxVotes','2'],['open','true']],Options:[['id','name','description','active'],['a','作品甲','','true'],['b','作品乙','','true']],Votes:[['timestamp','class','no','name','key','ids','names','agent']]};
-function sheet(name){return {getDataRange:()=>({getValues:()=>sheets[name].map(r=>r.slice())}),appendRow:r=>sheets[name].push(r),getRange:(r,c)=>({setValue:v=>sheets[name][r-1][c-1]=v})}}
+let sheetReads=0;
+function sheet(name){return {getDataRange:()=>({getValues:()=>{sheetReads++;return sheets[name].map(r=>r.slice())}}),appendRow:r=>sheets[name].push(r),getRange:(r,c)=>({setValue:v=>sheets[name][r-1][c-1]=v,setValues:values=>values.forEach((row,i)=>row.forEach((v,j)=>sheets[name][r-1+i][c-1+j]=v))})}}
 const props=new Map([['SPREADSHEET_ID','test']]),cache=new Map();let locks=0;
 const ctx=vm.createContext({console,PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),deleteProperty:k=>props.delete(k)})},SpreadsheetApp:{openById:()=>({getSheetByName:sheet})},LockService:{getScriptLock:()=>({waitLock:()=>locks++,releaseLock:()=>locks--})},CacheService:{getScriptCache:()=>({get:k=>cache.get(k),put:(k,v)=>cache.set(k,v),remove:k=>cache.delete(k)})},Utilities:{getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(algo,s)=>[...crypto.createHash('sha256').update(s).digest()],formatDate:d=>d.toISOString()},Session:{getScriptTimeZone:()=> 'Asia/Taipei'},ContentService:{MimeType:{JSON:'json'},createTextOutput:s=>({setMimeType:()=>s})}});
 vm.runInContext(fs.readFileSync('backend/Code.gs','utf8'),ctx);
@@ -14,12 +15,19 @@ assert.equal(api('submitVote',{studentClass:'502',studentNo:'1',studentName:'學
 assert.equal(api('submitVote',{studentClass:'502',studentNo:'0',studentName:'學生',choices:['a']}).ok,false);
 assert.equal(api('submitVote',{studentClass:'５０２',studentNo:'０１',studentName:'學生',choices:['a','b']}).ok,true);
 assert.equal(api('submitVote',{studentClass:'502',studentNo:'1',studentName:'不同姓名',choices:['a']}).ok,false);
-let pub=api('getPublicPoll');assert.equal(pub.results[0].count,1);assert.equal(JSON.stringify(pub).includes('學生'),false);assert.equal('votes' in pub,false);
+let pub=api('getPublicPoll');
+const readsBefore=sheetReads;api('getPublicPoll');assert.equal(sheetReads,readsBefore,'公開快取命中不讀試算表');
+const adminBefore=sheetReads;api('getAdminData',{token});assert.equal(sheetReads-adminBefore,3,'後台每份表只讀一次');assert.equal(pub.results[0].count,1);assert.equal(JSON.stringify(pub).includes('學生'),false);assert.equal('votes' in pub,false);
 assert.equal(api('getAdminData',{token}).votes[0].studentName,'學生');
 assert.equal(api('deleteOption',{token,id:'a'}).ok,true);
 assert.deepEqual(api('getAdminData',{token}).votes[0].choiceNames,['作品甲','作品乙']);
 assert.equal(api('submitVote',{studentClass:'502',studentNo:'2',studentName:'學生二',choices:['a']}).ok,false);
 assert.equal(api('saveSettings',{token,maxVotes:2,open:false}).ok,true);
+assert.equal(api('getPublicPoll').poll.open,false,'儲存狀態使公開快取失效');
+assert.equal(api('saveSettings',{token,title:'課程票選',maxVotes:2,open:true}).ok,true);
+assert.equal(api('getPublicPoll').poll.open,true,'可重新開放');
+assert.equal(api('saveSettings',{token,maxVotes:2,open:"false"}).ok,true);
+assert.equal(api('getPublicPoll').poll.open,false,'字串 false 不可轉成開放');
 assert.equal(api('submitVote',{studentClass:'502',studentNo:'2',studentName:'學生二',choices:['b']}).ok,false);
 assert.equal(api('adminLogout',{token}).ok,true);assert.equal(api('getAdminData',{token}).ok,false);
 assert.equal(ctx.sheetText_('=1+1'),"'=1+1");
