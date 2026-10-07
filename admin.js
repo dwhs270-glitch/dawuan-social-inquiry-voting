@@ -17,13 +17,19 @@ async function callApi(action,payload={}){
 function msg(id,text,type=""){ const e=$(id);e.hidden=false;e.className="message "+type;e.textContent=text; }
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));}
 
+function hasFeature(name){return snapshot?.features?.[name]===true;}
+function toTaipeiInput(iso){return iso?new Date(Date.parse(iso)+8*3600000).toISOString().slice(0,16):"";}
+function deadlineLabel(iso){return iso?toTaipeiInput(iso).replace("T"," ")+"（臺灣時間）":"未設定";}
 function controls(){
   ["settingTitle","settingDescription","settingMaxVotes","settingOpen","saveSettings","newOptionName","newOptionDesc","addOption","refreshAdmin","exportCsv"].forEach(id=>$(id).disabled=!ready||busy||!!adminRead);
+  $("settingDeadline").disabled=!ready||busy||!!adminRead||!hasFeature("deadline");
+  $("resetPoll").disabled=!ready||busy||!!adminRead||!hasFeature("resetPoll");
+  document.querySelectorAll("#votesTable button").forEach(b=>b.disabled=!ready||busy||!!adminRead||!hasFeature("deleteVote"));
   document.querySelectorAll("#adminOptions button").forEach(b=>b.disabled=!ready||busy||!!adminRead);
 }
 function updateStatus(){
-  const status=snapshot?.poll?.open ? "開放投票" : "關閉投票";
-  $("savedStatus").textContent="目前已儲存狀態："+status+(settingsDirty ? "（有尚未儲存的修改）" : "");
+  const status=snapshot?.poll?.ended ? "已到截止時間" : snapshot?.poll?.open ? "開放投票" : "關閉投票";
+  $("savedStatus").textContent="目前已儲存狀態："+status+"；截止時間："+deadlineLabel(snapshot?.poll?.deadlineAt)+(settingsDirty ? "（有尚未儲存的修改）" : "");
 }
 async function login(){
   if(busy)return;
@@ -46,9 +52,11 @@ function applyAdmin(d){
     $("settingTitle").value=d.poll.title||"";
     $("settingDescription").value=d.poll.description||"";
     $("settingMaxVotes").value=d.poll.maxVotes||1;
-    $("settingOpen").value=String(!!d.poll.open);
+    $("settingOpen").value=String(!!(d.poll.manualOpen??d.poll.open));
+    $("settingDeadline").value=toTaipeiInput(d.poll.deadlineAt);
   }
   renderOptions(d.poll.options||[]);renderResults(d.results||[]);renderVotes(d.votes||[]);
+  $("featureNotice").hidden=hasFeature("deadline");
   ready=true;updateStatus();
 }
 async function loadAdmin(){
@@ -65,7 +73,7 @@ async function loadAdmin(){
     }finally{adminRead=null;controls();}
   })();controls();return adminRead;
 }
-["settingTitle","settingDescription","settingMaxVotes","settingOpen"].forEach(id=>{
+["settingTitle","settingDescription","settingMaxVotes","settingOpen","settingDeadline"].forEach(id=>{
   $(id).addEventListener("input",()=>{settingsDirty=true;updateStatus();});
   $(id).addEventListener("change",()=>{settingsDirty=true;updateStatus();});
 });
@@ -99,10 +107,25 @@ function renderResults(results){
 function renderVotes(votes){
   $("votesTable").innerHTML=votes.map(v=>`<tr>
     <td>${esc(v.timestamp)}</td><td>${esc(v.studentClass)}</td><td>${esc(v.studentNo)}</td>
-    <td>${esc(v.studentName)}</td><td>${esc(v.choiceNames.join("、"))}</td></tr>`).join("");
+    <td>${esc(v.studentName)}</td><td>${esc(v.choiceNames.join("、"))}</td>
+    <td>${hasFeature("deleteVote")&&v.voteId?`<button class="danger" data-vote-id="${esc(v.voteId)}">刪除紀錄</button>`:"—"}</td></tr>`).join("");
 }
+$("votesTable").addEventListener("click",e=>{
+  const button=e.target.closest("button[data-vote-id]");if(!button)return;
+  const vote=snapshot?.votes.find(v=>v.voteId===button.dataset.voteId);if(!vote)return;
+  if(!confirm(`刪除 ${vote.studentClass} 班 ${vote.studentNo} 號 ${vote.studentName} 的投票紀錄？\n得票數會重新計算，該學生可再次投票。`))return;
+  mutate(button,"deleteVote",{voteId:vote.voteId},d=>applyAdmin(d));
+});
+$("resetPoll").onclick=()=>{
+  if(!ready||busy||!hasFeature("resetPoll"))return;
+  const confirmation=prompt("將清除本次候選項目、全部投票紀錄及設定。需要保留資料時請先匯出 CSV。\n請輸入「刪除本次票選」確認：");
+  if(confirmation===null)return;
+  if(confirmation!=="刪除本次票選")return msg("adminMessage","確認文字不符，未刪除任何資料。","error");
+  mutate($("resetPoll"),"resetPoll",{confirmation},d=>{settingsDirty=false;applyAdmin(d);});
+};
 $("saveSettings").onclick=()=>{
   const payload={title:$("settingTitle").value.trim(),description:$("settingDescription").value.trim(),maxVotes:Number($("settingMaxVotes").value),open:$("settingOpen").value==="true"};
+  if(hasFeature("deadline")){const local=$("settingDeadline").value;payload.deadlineAt=local?(local.length===16?local+":00+08:00":local+"+08:00"):"";}
   if(!Number.isInteger(payload.maxVotes)||payload.maxVotes<1||payload.maxVotes>99)return msg("adminMessage","每人票數請填 1～99 的整數。","error");
   mutate($("saveSettings"),"saveSettings",payload,(d)=>{
     settingsDirty=false;snapshot.poll={...snapshot.poll,...(d.settings||payload)};updateStatus();
