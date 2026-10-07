@@ -32,7 +32,7 @@ async function login(){
     const d=await callApi("adminLogin",{username:$("adminUser").value.trim(),password:$("adminPass").value});
     token=d.token; sessionStorage.setItem("dwhs_vote_admin_token",token);
     $("adminPass").value="";$("loginCard").hidden=true;$("adminPanel").hidden=false;
-    busy=false;await loadAdmin();
+    busy=false;if(d.poll){applyAdmin(d);msg("adminMessage","資料已更新。","success");}else await loadAdmin();
   }catch(e){msg("loginMessage",e.message,"error")}
   finally{busy=false;$("loginBtn").disabled=false;$("loginBtn").textContent="登入後台";controls();}
 }
@@ -83,7 +83,7 @@ function renderOptions(options){
     const el=document.createElement("div");el.className="admin-option";
     el.innerHTML=`<div class="meta"><strong>${esc(o.name)}</strong><span>${esc(o.description||"")}</span></div>
       <button class="danger" data-id="${esc(o.id)}">停用</button>`;
-    el.querySelector("button").onclick=async()=>{if(confirm(`確定停用「${o.name}」？歷史投票仍保留。`)){await mutate(el.querySelector("button"),"deleteOption",{id:o.id},async()=>{if(!await loadAdmin())throw new Error("已停用，但資料更新失敗，請重新整理確認。");});}};
+    el.querySelector("button").onclick=async()=>{if(confirm(`確定停用「${o.name}」？歷史投票仍保留。`)){await mutate(el.querySelector("button"),"deleteOption",{id:o.id},async(d)=>{if(d.id){snapshot.poll.options=snapshot.poll.options.filter(x=>x.id!==d.id);snapshot.results=snapshot.results.filter(x=>x.id!==d.id);applyAdmin(snapshot);}else if(!await loadAdmin())throw new Error("已停用，但資料更新失敗，請重新整理確認。");});}};
     box.appendChild(el);
   });
 }
@@ -104,15 +104,15 @@ function renderVotes(votes){
 $("saveSettings").onclick=()=>{
   const payload={title:$("settingTitle").value.trim(),description:$("settingDescription").value.trim(),maxVotes:Number($("settingMaxVotes").value),open:$("settingOpen").value==="true"};
   if(!Number.isInteger(payload.maxVotes)||payload.maxVotes<1||payload.maxVotes>99)return msg("adminMessage","每人票數請填 1～99 的整數。","error");
-  mutate($("saveSettings"),"saveSettings",payload,()=>{
-    settingsDirty=false;snapshot.poll={...snapshot.poll,...payload};updateStatus();
+  mutate($("saveSettings"),"saveSettings",payload,(d)=>{
+    settingsDirty=false;snapshot.poll={...snapshot.poll,...(d.settings||payload)};updateStatus();
   });
 };
 $("addOption").onclick=()=>{
   const name=$("newOptionName").value.trim(),description=$("newOptionDesc").value.trim();
   if(!name)return msg("adminMessage","請輸入候選名稱。","error");
-  mutate($("addOption"),"addOption",{name,description},async()=>{
-    $("newOptionName").value="";$("newOptionDesc").value="";if(!await loadAdmin())throw new Error("已新增，但資料更新失敗，請重新整理確認。");
+  mutate($("addOption"),"addOption",{name,description},async(d)=>{
+    $("newOptionName").value="";$("newOptionDesc").value="";if(d.option){snapshot.poll.options.push(d.option);snapshot.results.push({...d.option,count:0});applyAdmin(snapshot);}else if(!await loadAdmin())throw new Error("已新增，但資料更新失敗，請重新整理確認。");
   });
 };
 $("refreshAdmin").onclick=loadAdmin;
