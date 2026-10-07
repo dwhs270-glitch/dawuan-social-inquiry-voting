@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>票選系統後台｜大灣高中</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="admin-body">
+  <header class="hero compact">
+    <div class="wrap hero-inner">
+      <div>
+        <span class="eyebrow">管理者後台</span>
+        <h1>社會探究與實作課程票選系統</h1>
+      </div>
+      <a class="admin-link" href="index.html">回前台</a>
+    </div>
+  </header>
+
+  <main class="wrap admin-main">
+    <section id="loginCard" class="card login-card">
+      <h2>後台登入</h2>
+      <p class="muted">僅授權教師或管理人員使用。</p>
+      <div class="form-grid">
+        <label class="span-2">
+          <span>帳號</span>
+          <input id="adminUser" autocomplete="username">
+        </label>
+        <label class="span-2">
+          <span>密碼</span>
+          <input id="adminPass" type="password" autocomplete="current-password">
+        </label>
+      </div>
+      <button id="loginBtn" class="primary full">登入後台</button>
+      <div id="loginMessage" class="message" hidden></div>
+    </section>
+
+    <section id="adminPanel" hidden>
+      <div class="admin-toolbar">
+        <div>
+          <span class="eyebrow dark">後台管理</span>
+          <h2>票選設定與投票紀錄</h2>
+        </div>
+        <button id="logoutBtn" class="secondary">登出</button>
+      </div>
+
+      <div class="admin-grid">
+        <section class="card">
+          <h3>基本設定</h3>
+          <div class="form-grid">
+            <label class="span-2">
+              <span>票選名稱</span>
+              <input id="settingTitle">
+            </label>
+            <label class="span-2">
+              <span>票選說明</span>
+              <textarea id="settingDescription" rows="3"></textarea>
+            </label>
+            <label>
+              <span>每人可投票數</span>
+              <input id="settingMaxVotes" type="number" min="1" max="99">
+            </label>
+            <label>
+              <span>投票狀態</span>
+              <select id="settingOpen">
+                <option value="true">開放投票</option>
+                <option value="false">關閉投票</option>
+              </select>
+            </label>
+          </div>
+          <button id="saveSettings" class="primary">儲存設定</button>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h3>候選同學／作品</h3>
+              <p class="muted small">可新增或停用候選項目；歷史投票紀錄會保留。</p>
+            </div>
+          </div>
+          <div class="inline-form">
+            <input id="newOptionName" placeholder="候選名稱">
+            <input id="newOptionDesc" placeholder="簡短說明（可留白）">
+            <button id="addOption" class="primary">新增</button>
+          </div>
+          <div id="adminOptions" class="admin-option-list"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h3>即時結果</h3>
+            <p class="muted small">顯示各候選項目目前得票數。</p>
+          </div>
+          <button id="refreshAdmin" class="secondary">重新整理</button>
+        </div>
+        <div id="adminResults" class="results-list"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h3>完整投票資料</h3>
+            <p class="muted small">僅後台可查看班級、座號、姓名、投票內容與時間。</p>
+          </div>
+          <button id="exportCsv" class="secondary">匯出 CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>時間</th>
+                <th>班級</th>
+                <th>座號</th>
+                <th>姓名</th>
+                <th>投票內容</th>
+              </tr>
+            </thead>
+            <tbody id="votesTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
