@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>臺南市立大灣高中｜社會探究與實作課程票選系統</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap hero-inner">
+      <div>
+        <span class="eyebrow">臺南市立大灣高中</span>
+        <h1>社會探究與實作課程票選系統</h1>
+        <p>票選優秀同學或作品，完成身分資料後即可投票。</p>
+      </div>
+      <a class="admin-link" href="admin.html">後台管理</a>
+    </div>
+  </header>
+
+  <main class="wrap main-grid">
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="step">STEP 1</span>
+          <h2>填寫投票人資料</h2>
+        </div>
+        <span id="statusBadge" class="badge">讀取中</span>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          <span>班級</span>
+          <input id="studentClass" type="text" inputmode="numeric" maxlength="10" placeholder="例如：502">
+        </label>
+        <label>
+          <span>座號</span>
+          <input id="studentNo" type="number" min="1" max="99" placeholder="例如：12">
+        </label>
+        <label class="span-2">
+          <span>姓名</span>
+          <input id="studentName" type="text" maxlength="20" placeholder="請輸入姓名">
+        </label>
+      </div>
+      <p class="hint">系統會以「班級＋座號」作為防重複投票依據。請填本人資料；本系統不會自動查驗學籍。姓名與投票紀錄僅供任課教師查核。</p>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <span class="step">STEP 2</span>
+          <h2 id="pollTitle">載入票選項目中…</h2>
+        </div>
+        <div class="vote-counter">可投 <strong id="maxVotes">-</strong> 票</div>
+      </div>
+
+      <p id="pollDescription" class="muted"></p>
+      <div id="options" class="option-grid"></div>
+
+      <div class="sticky-submit">
+        <div>
+          已選 <strong id="selectedCount">0</strong> / <strong id="selectedLimit">0</strong> 票
+        </div>
+        <button id="submitVote" class="primary" disabled>確認送出投票</button>
+      </div>
+      <div id="message" role="status" aria-live="polite" class="message" hidden></div>
+    </section>
+
+    <section class="card results-card">
+      <div class="section-head">
+        <div>
+          <span class="step">RESULT</span>
+          <h2>目前票選結果</h2>
+        </div>
+        <button id="refreshResults" class="secondary">重新整理</button>
+      </div>
+      <p class="muted">前台僅顯示候選項目與得票數，不顯示個人投票資料。</p>
+      <div id="results" class="results-list"></div>
+    </section>
+  </main>
+
+  <footer>
+    臺南市立大灣高中｜社會探究與實作課程
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
