@@ -2,6 +2,7 @@ const API = window.APP_CONFIG.API_URL;
 let poll = null;
 let selected = new Set();
 let loading = null, submitted = false;
+let deadlineTimer=null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -43,6 +44,15 @@ function applyPoll(data){
   document.querySelectorAll("#options input").forEach(i=>i.disabled=!poll.open||submitted);
   if(selected.size>poll.maxVotes){selected.clear();document.querySelectorAll("#options input").forEach(i=>{i.checked=false;i.closest("label").classList.remove("selected");});}
   updateSelected();renderResults(data.results||[]);
+  if(deadlineTimer)clearInterval(deadlineTimer);
+  const deadline=Date.parse(poll.deadlineAt||"");
+  if(Number.isFinite(deadline)){
+    $("pollDeadline").textContent="投票截止："+new Date(deadline+8*3600000).toISOString().slice(0,16).replace("T"," ")+"（臺灣時間）";
+    $("pollDeadline").hidden=false;
+    const check=()=>{if(Date.now()>=deadline||poll.ended){poll.open=false;poll.ended=true;if(deadlineTimer)clearInterval(deadlineTimer);$("statusBadge").textContent="已截止";$("statusBadge").className="badge closed";document.querySelectorAll("#options input").forEach(i=>i.disabled=true);updateSelected();}};
+    check();if(!poll.ended)deadlineTimer=setInterval(check,1000);
+  }else{$("pollDeadline").hidden=true;}
+
 }
 async function loadPoll(){
   if(loading)return loading;
