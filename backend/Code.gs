@@ -18,7 +18,9 @@ const SHEET_OPTIONS = "Options";
 const SHEET_VOTES = "Votes";
 const PROP_ADMIN_USER = "ADMIN_USER_HASH";
 const PROP_ADMIN_PASS = "ADMIN_PASS_HASH";
-const PROP_ADMIN_TOKENS = "ADMIN_TOKENS";
+const BACKEND_VERSION = "20261007-1306";
+let requestDb = null;
+function invalidatePublic_(){PropertiesService.getScriptProperties().setProperty("PUBLIC_REV",Utilities.getUuid());}
 
 function setup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -39,21 +41,24 @@ function setup() {
   props.deleteProperty("ADMIN_USER"); props.deleteProperty("ADMIN_PASSWORD");
 }
 function db_() {
+  if(requestDb)return requestDb;
   const id=PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
   if (!id) throw new Error("系統尚未完成初始化。");
-  return SpreadsheetApp.openById(id);
+  return requestDb=SpreadsheetApp.openById(id);
 }
 
 function doGet() {
-  return json_({ok:true, message:"Dawuan voting API is running."});
+  return json_({ok:true, message:"Dawuan voting API is running.",version:BACKEND_VERSION});
 }
 
 function doPost(e) {
+  requestDb=null;
   try {
     const data = JSON.parse((e.postData && e.postData.contents) || "{}");
     const action = data.action || "";
-    const lock=LockService.getScriptLock();
-    lock.waitLock(10000);
+    const mutating=["submitVote","saveSettings","addOption","deleteOption"].includes(action);
+    const lock=mutating?LockService.getScriptLock():null;
+    if(lock)lock.waitLock(20000);
     try {
     switch(action){
       case "getPublicPoll": return json_(publicPoll_());
@@ -66,15 +71,23 @@ function doPost(e) {
       case "deleteOption": requireAdmin_(data.token); return json_(deleteOption_(data));
       default: throw new Error("未知操作");
     }
-    } finally { lock.releaseLock(); }
+    } finally { if(lock)lock.releaseLock(); }
   } catch(err) {
     return json_({ok:false,error:err.message || String(err)});
   }
 }
 
 function publicPoll_(){
-  const poll = readPoll_();
-  return {ok:true,poll:poll,results:results_(poll.options)};
+  const revision=PropertiesService.getScriptProperties().getProperty("PUBLIC_REV")||"initial";
+  const cache=CacheService.getScriptCache(),key="public:"+revision;
+  const saved=cache.get(key);
+  if(saved){try{return JSON.parse(saved);}catch(e){}}
+  const poll=readPoll_();
+  const data={ok:true,poll,results:results_(poll.options)};
+  const encoded=JSON.stringify(data);
+  // 只快取公开候選與彙總票數；沒有姓名、班級、座號或登入憑證。
+  if(encoded.length<20000)cache.put(key,encoded,10);
+  return data;
 }
 
 function submitVote_(d){
@@ -100,8 +113,9 @@ function submitVote_(d){
     const exists = values.slice(1).some(r=>String(r[4])===studentKey);
     if(exists) throw new Error("此班級與座號已完成投票，無法重複提交。");
     const choiceNames = choices.map(id=>valid.get(id));
-    sh.appendRow([new Date(),studentClass,studentNo,sheetText_(studentName),studentKey,choices.join("|"),sheetText_(choiceNames.join("、")),clean_(d.userAgent||"",150)]);
-  return {ok:true,results:results_(poll.options)};
+    const row=[new Date(),studentClass,studentNo,sheetText_(studentName),studentKey,choices.join("|"),sheetText_(choiceNames.join("、")),clean_(d.userAgent||"",150)];
+    sh.appendRow(row);invalidatePublic_();
+  return {ok:true,results:results_(poll.options,[...values.slice(1),row])};
 }
 
 function adminLogin_(d){
@@ -110,7 +124,7 @@ function adminLogin_(d){
      sha256_(String(d.password||""))!==props.getProperty(PROP_ADMIN_PASS)) throw new Error("帳號或密碼錯誤。");
   const token=Utilities.getUuid()+Utilities.getUuid();
   CacheService.getScriptCache().put("session:"+token,"1",21600);
-  return {ok:true,token};
+  return {...adminData_(),token};
 }
 function requireAdmin_(token){
   if(!token || !CacheService.getScriptCache().get("session:"+token)) throw new Error("後台登入已失效，請重新登入。");
@@ -118,31 +132,36 @@ function requireAdmin_(token){
 
 function adminData_(){
   const poll=readPoll_();
-  return {ok:true,poll,results:results_(poll.options),votes:readVotes_(poll.options)};
+  const rows=db_().getSheetByName(SHEET_VOTES).getDataRange().getValues().slice(1);
+  return {ok:true,poll,results:results_(poll.options,rows),votes:readVotes_(poll.options,rows)};
 }
 
 function saveSettings_(d){
   const maxVotes=Number(d.maxVotes);
   if(!Number.isInteger(maxVotes)||maxVotes<1||maxVotes>99) throw new Error("票數請填 1～99 的整數。");
   const sh=db_().getSheetByName(SHEET_SETTINGS);
-  const map={title:clean_(d.title,100)||"課程票選",description:clean_(d.description,500),maxVotes:String(maxVotes),open:String(!!d.open)};
+  const map={title:clean_(d.title,100)||"課程票選",description:clean_(d.description,500),maxVotes:String(maxVotes),open:String(d.open===true||d.open==="true")};
   const rows=sh.getDataRange().getValues();
-  rows.slice(1).forEach((r,i)=>{if(map.hasOwnProperty(r[0]))sh.getRange(i+2,2).setValue(sheetText_(map[r[0]]))});
-  return {ok:true};
+  const values=rows.slice(1).map(r=>[r[0],Object.prototype.hasOwnProperty.call(map,r[0])?sheetText_(map[r[0]]):r[1]]);
+  sh.getRange(2,1,values.length,2).setValues(values);
+  invalidatePublic_();
+  return {ok:true,settings:{title:map.title,description:map.description,maxVotes,open:map.open==="true"}};
 }
 
 function addOption_(d){
   const name=clean_(d.name,100),description=clean_(d.description,300);
   if(!name) throw new Error("候選名稱不可空白。");
-  db_().getSheetByName(SHEET_OPTIONS).appendRow([Utilities.getUuid(),sheetText_(name),sheetText_(description),"true"]);
-  return {ok:true};
+  const id=Utilities.getUuid();
+  db_().getSheetByName(SHEET_OPTIONS).appendRow([id,sheetText_(name),sheetText_(description),"true"]);
+  invalidatePublic_();
+  return {ok:true,option:{id,name,description}};
 }
 function deleteOption_(d){
   const id=String(d.id||"");
   const sh=db_().getSheetByName(SHEET_OPTIONS);
   const values=sh.getDataRange().getValues();
   for(let i=1;i<values.length;i++){
-    if(String(values[i][0])===id){ sh.getRange(i+1,4).setValue("false"); return {ok:true}; }
+    if(String(values[i][0])===id){ sh.getRange(i+1,4).setValue("false");invalidatePublic_();return {ok:true,id}; }
   }
   throw new Error("找不到候選項目。");
 }
@@ -156,18 +175,15 @@ function readPoll_(){
     .map(r=>({id:String(r[0]),name:String(r[1]),description:String(r[2]||"")}));
   return {title:cfg.title||"課程票選",description:cfg.description||"",maxVotes:Math.max(1,Number(cfg.maxVotes)||1),open:String(cfg.open).toLowerCase()==="true",options:o};
 }
-function results_(options){
+function results_(options,rows){
   const counts={}; options.forEach(o=>counts[o.id]=0);
-  const sh=db_().getSheetByName(SHEET_VOTES);
-  const rows=sh.getDataRange().getValues().slice(1);
+  if(!rows)rows=db_().getSheetByName(SHEET_VOTES).getDataRange().getValues().slice(1);
   rows.forEach(r=>String(r[5]||"").split("|").filter(Boolean).forEach(id=>{if(counts.hasOwnProperty(id))counts[id]++}));
   return options.map(o=>({id:o.id,name:o.name,count:counts[o.id]||0})).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name,"zh-Hant"));
 }
-function readVotes_(options){
-  const nameMap=new Map(options.map(o=>[o.id,o.name]));
-  const sh=db_().getSheetByName(SHEET_VOTES);
-  return sh.getDataRange().getValues().slice(1).reverse().map(r=>{
-    const ids=String(r[5]||"").split("|").filter(Boolean);
+function readVotes_(options,rows){
+  if(!rows)rows=db_().getSheetByName(SHEET_VOTES).getDataRange().getValues().slice(1);
+  return [...rows].reverse().map(r=>{
     return {
       timestamp:r[0] instanceof Date ? Utilities.formatDate(r[0],Session.getScriptTimeZone()||"Asia/Taipei","yyyy-MM-dd HH:mm:ss") : String(r[0]),
       studentClass:String(r[1]),studentNo:String(r[2]),studentName:String(r[3]),
