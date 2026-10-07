@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 function harness(file,storage={}){
  const els=new Map(),calls=[],pending=[];
  function el(id){if(!els.has(id))els.set(id,{value:'',textContent:'',hidden:false,disabled:false,innerHTML:'',events:{},addEventListener(name,fn){this.events[name]=fn;}});return els.get(id);}
- const context=vm.createContext({window:{APP_CONFIG:{API_URL:'https://example.test'}},document:{getElementById:el,querySelectorAll(){return[]}},sessionStorage:{getItem(k){return storage[k]||null},setItem(k,v){storage[k]=v},removeItem(k){delete storage[k]}},fetch(url,options){calls.push(JSON.parse(options.body));return new Promise(resolve=>pending.push(data=>resolve({json:async()=>data})))},AbortSignal,Set,Map,JSON,Date,Number,String,Promise,console,confirm(){return true}});
+ const context=vm.createContext({window:{APP_CONFIG:{API_URL:'https://example.test'}},document:{getElementById:el,querySelectorAll(){return[]}},sessionStorage:{getItem(k){return storage[k]||null},setItem(k,v){storage[k]=v},removeItem(k){delete storage[k]}},fetch(url,options){calls.push(JSON.parse(options.body));return new Promise(resolve=>pending.push(data=>resolve({json:async()=>data})))},AbortSignal,Set,Map,JSON,Date,Number,String,Promise,console,setInterval,clearInterval,confirm(){return true}});
  vm.runInContext(fs.readFileSync(file,'utf8'),context);return {context,el,calls,pending};
 }
 const poll={title:'測試票選',description:'測試',maxVotes:2,open:false,options:[]};
@@ -24,12 +24,20 @@ const tick=()=>new Promise(r=>setImmediate(r));
  assert.equal(h.el('settingOpen').value,'false');
  const fast=harness('admin.js');fast.el('adminUser').value='mock-user';fast.el('adminPass').value='mock-password';
  const logging=vm.runInContext('login()',fast.context);
- fast.pending.shift()({ok:true,token:'mock-token',poll:{...poll},results:[],votes:[]});await logging;
+ fast.pending.shift()({ok:true,token:'mock-token',poll:{...poll,deadlineAt:'2099-01-01T06:00:00.000Z'},features:{deadline:true,deleteVote:true,resetPoll:true},results:[],votes:[]});await logging;
  assert.equal(fast.calls.length,1,'新版後端登入只需一次請求');assert.equal(fast.el('saveSettings').disabled,false);
+ assert.equal(fast.el('settingDeadline').value,'2099-01-01T14:00');assert.equal(fast.el('resetPoll').disabled,false);
+ fast.el('settingDeadline').value='2099-02-01T12:30';fast.el('saveSettings').onclick();assert.equal(fast.calls[1].deadlineAt,'2099-02-01T12:30:00+08:00');
+ fast.pending.shift()({ok:true});await tick();
+ fast.context.prompt=()=> '錯誤';fast.el('resetPoll').onclick();assert.equal(fast.calls.length,2,'確認文字不符不送出重設');
+ fast.context.prompt=()=> '刪除本次票選';fast.el('resetPoll').onclick();assert.equal(fast.calls[2].action,'resetPoll');
+ fast.pending.shift()({ok:true,poll:{...poll},features:{deadline:true,deleteVote:true,resetPoll:true},results:[],votes:[]});await tick();
+ assert.equal(fast.el('settingDeadline').value,'');
  const f=harness('app.js');f.pending.shift()({ok:true,poll:{...poll},results:[]});await tick();
  assert.equal(f.el('statusBadge').textContent,'目前已關閉');
  f.el('refreshResults').events.click();f.el('refreshResults').events.click();assert.equal(f.calls.length,2);
  f.pending.shift()({ok:true,poll:{...poll,open:true,maxVotes:3},results:[]});await tick();
  assert.equal(f.el('statusBadge').textContent,'開放投票');assert.equal(f.el('maxVotes').textContent,3);
- console.log('PASS: 慢速載入保護、读取合併、開放狀態提交、單次儲存、重複點擊保護、晚到讀取、前台狀態更新');
+ f.el('refreshResults').events.click();f.pending.shift()({ok:true,poll:{...poll,open:false,ended:true,deadlineAt:'2000-01-01T00:00:00.000Z'},results:[]});await tick();assert.equal(f.el('statusBadge').textContent,'已截止');
+ console.log('PASS: 截止欄位、臺灣時區、重設確認、已截止顯示、慢速載入保護、读取合併、開放狀態提交、單次儲存、重複點擊保護、晚到讀取、前台狀態更新');
 })().catch(e=>{console.error(e);process.exitCode=1});
