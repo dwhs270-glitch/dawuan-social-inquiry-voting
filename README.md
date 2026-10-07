@@ -10,7 +10,7 @@
 - 停用候選項目後歷史投票名稱仍保留；初始化不清除既有資料。
 
 ## 目前發布狀態
-這是完整可部署原始碼，尚未部署後端或設定 config.js，不能直接開始正式投票。
+前端已發布至 https://dwhs270-glitch.github.io/dawuan-social-inquiry-voting/，共用後端已部署並連接。預設投票關閉，請先在後台新增候選項目，再開放投票。
 GitHub 存放原始碼與前端；私密 Google 試算表儲存投票資料，Apps Script 負責登入與投票驗證。
 不需 Firebase 或 Cloudflare，也不需學生登入 Google。
 
